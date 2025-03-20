@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1">
+
+<style type='text/css'>
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+}
+
+body {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+p {
+  text-align: center;
+}
+
+#cnv {
+    width: 100%;
+    height: 100%;
+    background-color: lightgray;
+}
+
+#help {
+    position: fixed;
+    left: 50%;
+    background-color: white;
+    border: 1px solid black;
+    transform: translateX(-50%);
+    padding: 0 1em 0 1em;
+}
+</style>
+
+<script type='text/javascript'>
+
+const CLOCK_MAX = 12;
+
+function toRadians(deg) {
+    return deg * Math.PI / 180.0;
+}
+
+
+function clearHelp(ele) {
+    ele.style.display='none';
+    isHelpVisible = false;
+}
+
+
+function dist(x, y, mousePos) {
+    var xdiff = x - mousePos.x;
+    var ydiff = y - mousePos.y;
+    return Math.sqrt(xdiff*xdiff + ydiff*ydiff);
+}
+
+
+function getAdjustedMouseCoords(tgt, xPos, yPos) {
+    return {
+        x: xPos-tgt.offsetLeft,
+        y: yPos-tgt.offsetTop,
+    };
+}
+
+
+function _touchEventToDummyEvent(evt) {
+    evt.preventDefault();
+    evt.stopImmediatePropagation();
+    // On touchend, evt.touches[0] is undefined, so set to previous mouse position;
+    // touches[0] is defined on startTouch, but not endTouch.
+    // changedTouches[0] is defined on endTouch
+    var t = evt.touches[0] || evt.changedTouches[0] || {clientX: evt.clientX, clientY: evt.clientY };
+    return {
+        target: evt.target,
+        clientX: t.clientX,
+        clientY: t.clientY,
+    }
+}
+
+
+function touchStart(evt) {
+    mouseDown(_touchEventToDummyEvent(evt));
+}
+
+
+function touchEnd(evt) {
+    mouseUp(_touchEventToDummyEvent(evt));
+}
+
+
+function mouseDown(evt) {
+    downEvt = evt;
+}
+
+
+function mouseUp(evt) {
+
+    if (isHelpVisible || !downEvt) {
+        return;
+    }
+
+    // Check button touches. Button shadow is ignored.
+    var pos = getAdjustedMouseCoords(evt.target, evt.clientX, evt.clientY);
+    var cx = puzzle.centerX;
+    var cy = puzzle.centerY;
+    var n = puzzle.boxWidth/2;
+    var m = n;
+    if (puzzle.isFlipped) {
+        n = -n;
+    }
+    var r0 = dist(cx-n, cy-m, pos);
+    var r1 = dist(cx+n, cy-m, pos);
+    var r2 = dist(cx-n, cy+m, pos);
+    var r3 = dist(cx+n, cy+m, pos);
+    if (r0 < puzzle.buttonRadius) { puzzle.toggleButton(0); return; }
+    if (r1 < puzzle.buttonRadius) { puzzle.toggleButton(1); return; }
+    if (r2 < puzzle.buttonRadius) { puzzle.toggleButton(2); return; }
+    if (r3 < puzzle.buttonRadius) { puzzle.toggleButton(3); return; }
+    
+    // Check corner swipes.
+    var q = getCorner(downEvt, evt);
+    var s = getDir(downEvt, evt);
+    var a = (puzzle.isFlipped ? 1 : 0);
+    var b = (puzzle.isFlipped ? 0 : 1);
+    var c = (puzzle.isFlipped ? 3 : 2);
+    var d = (puzzle.isFlipped ? 2 : 3);
+    if (q==0) { // upper left
+        if (s == 'fsUp') { puzzle.incCorner(a); return; }
+        if (s == 'fsDown') { puzzle.decCorner(a); return; }
+    } else if (q ==2) { // upper right
+        if (s == 'bsDown') { puzzle.incCorner(b); return; }
+        if (s == 'bsUp') { puzzle.decCorner(b); return; }
+    } else if (q==6) { // lower left
+        if (s == 'bsUp') { puzzle.incCorner(c); return; }
+        if (s == 'bsDown') { puzzle.decCorner(c); return; }
+    } else if (q==8) { // lower right
+        if (s == 'fsDown') { puzzle.incCorner(d); return; }
+        if (s == 'fsUp') { puzzle.decCorner(d); return; }
+    }
+
+    // Check flip and scramble swipes.
+    var isCenterVert = Math.abs(puzzle.centerX - evt.clientX) < puzzle.boxWidth/2;
+    var isCenterHorz = Math.abs(puzzle.centerY - evt.clientY) < puzzle.boxWidth/2;
+    var xLen = Math.abs(downEvt.clientX - evt.clientX);
+    var yLen = Math.abs(downEvt.clientY - evt.clientY);
+    if (xLen > (puzzle.boxWidth * 0.5) && xLen/(yLen || 1) > 4 && isCenterHorz) { puzzle.flip(); return; }
+    if (yLen > puzzle.boxWidth && yLen/(xLen||1) > 4 && isCenterVert) { puzzle.scramble(); return; }
+
+}
+
+
+function isRightSide(dn, up, delta) {
+    var xval = puzzle.centerX + delta;
+    return (dn.clientX > xval && up.clientX > xval);
+}
+
+
+function isLeftSide(dn, up, delta) {
+    var xval = puzzle.centerX - delta;
+    return (dn.clientX < xval && up.clientX < xval);
+}
+
+
+function isLowerBand(dn, up, delta) {
+    var yval = puzzle.centerY - delta;
+    return (dn.clientY < yval && up.clientY < yval);
+}
+
+
+function isUpperBand(dn, up, delta) {
+    var yval = puzzle.centerY + delta;
+    return (dn.clientY > yval && up.clientY > yval);
+}
+
+
+function getCorner(dn, up) {
+    var delta = puzzle.boxWidth * 0.9; // arbitrary.
+    if (isLowerBand(dn, up, delta)) {
+        if (isRightSide(dn, up, delta)) return 2;
+        if (isLeftSide(dn, up, delta)) return 0;
+    } else if (isUpperBand(dn, up, delta)) {
+        if (isRightSide(dn, up, delta)) return 8;
+        if (isLeftSide(dn, up, delta)) return 6;
+    }
+    return -1;
+}
+
+
+// Check if swipe is 'forward slash' or 'back slash'.
+function getDir(dn, up) {
+    if (dn.clientY < up.clientY) {
+        return (dn.clientX < up.clientX ? 'bsDown' : 'fsDown');
+    } else {
+        return (dn.clientX < up.clientX ? 'fsUp' : 'bsUp');
+    }
+    return '';
+}
+
+
+class Button {
+    constructor(state) {
+        this.isDown = !!state;
+    }
+
+    toggle() {
+        this.isDown = !this.isDown;
+    }
+}
+
+
+class Clock {
+    constructor(position) {
+        this.position = position || 0;
+    }
+
+    inc() {
+        this.position++;
+        if (this.position > CLOCK_MAX-1) {
+            this.position = 0;
+        }
+    }
+
+    dec() {
+        this.position--;
+        if (this.position < 0) {
+            this.position = CLOCK_MAX-1;
+        }
+    }
+}
+
+
+class Puzzle {
+    constructor(canv) {
+        this.canvas = canv;
+        this.canvas.width = canv.offsetWidth; // Reset canvas width
+        this.canvas.height = canv.offsetHeight; // Reset canvas height
+
+        this.buttons = [];
+        this.frontClocks = [];
+        this.backClocks = [];
+
+        this.centerX = this.canvas.width / 2;
+        this.centerY = this.canvas.height / 2;
+        this.isFlipped = false;
+        this.boxWidth = Math.min(this.canvas.width, this.canvas.height) / 3;
+
+        this.buttonRadius = this.boxWidth/8; // Enlarged to make touching easier.
+
+        for (var i=0; i<4; i++) {
+            this.buttons.push(new Button());
+        }
+
+        for (var i=0; i<9; i++) {
+            this.frontClocks.push(new Clock());
+            this.backClocks.push(new Clock());
+        }
+    }
+
+    _clearCanvas() {
+        var ctx = this.canvas.getContext('2d');
+        ctx.fillStyle = (this.isFlipped ? 'lightgreen' : 'lightblue');
+        var width = this.boxWidth*3;
+        var height = this.boxWidth*3;
+        var xoff = this.centerX - width/2;
+        var yoff = this.centerY - height/2;
+
+        ctx.fillRect(xoff, yoff, width, height);
+
+        ctx.strokeStyle = 'black';
+        ctx.beginPath();
+        ctx.rect(xoff, yoff, width, height);
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    _drawClocks() {
+        var radius = this.boxWidth * 0.4;
+        var x0 = this.centerX - this.boxWidth;
+        var y0 = this.centerY - this.boxWidth;
+        var clocks = (this.isFlipped ? this.backClocks : this.frontClocks);
+        for (var i=0; i<3; i++) {
+            for (var k=0; k<3; k++) {
+                var x = x0 + k * this.boxWidth;
+                var y = y0 + i * this.boxWidth;
+                var n = i*3 + k;
+                this._drawFaceBg(x, y, radius);
+                this._drawPips(x, y, radius);
+                this._drawHand(x, y, radius, clocks[n]);
+            }
+        }
+    }
+
+    _drawFaceBg(x, y, r) {
+        var ctx = this._getContext();
+        var fillColor = (this.isFlipped ? 'green' : 'blue');
+        var strokeColor = 'black';
+        this._circle(x, y, r, fillColor, strokeColor);
+    }
+
+    _drawPips(x, y, r) {
+        for (var i=0; i<CLOCK_MAX; i++) {
+            var pipRadius = (i==6 ? this.boxWidth/30 : this.boxWidth/60);
+            var fill = (i==6 ? 'yellow' : 'white');
+            var rads = toRadians(i*30);
+            var pipX = ((r*1.05)+pipRadius)*Math.sin(rads);
+            var pipY = ((r*1.05)+pipRadius)*Math.cos(rads);
+            this._circle(x+pipX, y+pipY, pipRadius, fill);
+        }
+    }
+
+    _drawHand(x, y, r, clk) {
+        // The 0 position is pointing to right; add 9 to point up.
+        var degs = ((clk.position + 9) % CLOCK_MAX) * 30;
+        this._drawHandA(x, y, r*0.93, r*0.19, degs, 'red');
+        this._drawHandA(x, y, r*0.69, r*0.13, degs, 'yellow');
+        this._circle(x, y, r*0.08, 'black');
+    }
+
+    _drawHandA(x, y, r, r2, degs, fill) {
+        this._circle(x, y, r2, fill);
+        this._drawTriangle(x, y, r, r2, degs, fill);
+    }
+
+    _circle(x, y, r, fill, stroke) {
+        var ctx = this._getContext();
+        if (fill) {
+            ctx.fillStyle = fill;
+        }
+        if (stroke) {
+            ctx.strokeStyle = stroke; //  || 'black';
+        }
+
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, 2*Math.PI);
+        ctx.fill();
+        if (stroke) {
+            ctx.stroke();
+        }
+    }
+
+    _drawTriangle(x, y, r, r2, degs, fill) {
+
+        var p0Degs = degs - 90;
+        var p0Rads = toRadians(p0Degs);
+        var p0x = r2*Math.cos(p0Rads);
+        var p0y = r2*Math.sin(p0Rads);
+
+        var p1Rads = toRadians(degs);
+        var p1x = r*Math.cos(p1Rads);
+        var p1y = r*Math.sin(p1Rads);
+
+        var p2Degs = degs + 90;
+        var p2Rads = toRadians(p2Degs);
+        var p2x = r2*Math.cos(p2Rads);
+        var p2y = r2*Math.sin(p2Rads);
+
+        var ctx = this._getContext();
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x+p0x, y+p0y);
+        ctx.lineTo(x+p1x, y+p1y);
+        ctx.lineTo(x+p2x, y+p2y);
+        ctx.closePath();
+        ctx.fill();        
+    }
+
+    _getContext() {
+        return this.canvas.getContext('2d');
+    }
+
+    _getButtonPosition(n) {
+        var delta = this.boxWidth/2;
+        var modX = (n%2 ? delta : -delta);
+        var modY = (n>1 ? delta : -delta);
+        if (this.isFlipped) modX = -modX;
+        return {
+            x: this.centerX + modX,
+            y: this.centerY + modY,
+        };
+    }
+
+    _drawButtons() {
+        for (var row=0; row<2; row++) {
+            for (var col=0; col<2; col++) {
+                var n = row*2 + col;
+                var isUp = (this.isButtonUp(n) != this.isFlipped);
+                var pos = this._getButtonPosition(n);
+
+                if (isUp) { // draw shadow
+                    this._circle(pos.x, pos.y, this.buttonRadius, 'black', 'black');
+                }
+
+                var shadowY = (isUp ? this.boxWidth/25 : 0);
+                var fill = (isUp ? 'yellow' : 'brown');
+                this._circle(pos.x, pos.y-shadowY, this.buttonRadius, fill, 'black');
+            }
+        }
+    }
+
+
+    _app(bag, vals) {
+        vals.forEach(val => {
+            if (!bag.includes(val)) {
+                bag.push(val);
+            }
+        });
+    }
+
+    _swap(parent, a, b) {
+        var tmp = parent[a];
+        parent[a] = parent[b];
+        parent[b] = tmp;
+    }
+
+    _getDials(bn, getInverse) {
+        var dials = {
+            c0: {
+                up: [0,1,3,4],
+                dn: [0],
+            },
+            c1: {
+                up: [1,2,4,5],
+                dn: [2],
+            },
+            c2: {
+                up: [3,4,6,7],
+                dn: [6],
+            },
+            c3: {
+                up: [4,5,7,8],
+                dn: [8],
+            }
+        };
+
+        if (getInverse) {
+            this._swap(dials, 'c0', 'c1');
+            this._swap(dials, 'c2', 'c3');
+            for (var i=0; i<4; i++) {
+                var n = 'c'+i;
+                this._swap(dials[n], 'up', 'dn');
+            }
+        }
+
+        var dialsForUp = [];
+        var dialsForDn = [];
+
+        for (var i=0; i<4; i++) {
+            var isUp = this.isButtonUp(i);
+            var n = 'c'+i;
+            if (isUp) {
+                dialsForUp.push(...dials[n].up);
+            } else {
+                dialsForDn.push(...dials[n].dn);
+            }
+        }
+
+        var ary = (this.isButtonUp(bn) ? dialsForUp : dialsForDn); 
+        return [...new Set(ary)].sort(); // sorting is optional
+    }
+
+    _turnHands(bn, dir) {
+
+        var isVis = false;
+        var front = this._getDials(bn, isVis);
+        var back = this._getDials(bn, !isVis);
+
+        if (this.isFlipped) {
+            dir = !dir;
+        }
+
+        front.forEach(i => {
+            if (dir) {
+                this.frontClocks[i].inc();
+            } else {
+                this.frontClocks[i].dec();
+            }
+        });
+
+        back.forEach(i => {
+            if (dir) {
+                this.backClocks[i].dec();
+            } else {
+                this.backClocks[i].inc();
+            }
+        });
+
+    }
+
+    draw() {
+        this._clearCanvas();
+        this._drawClocks();
+        this._drawButtons();
+    }
+
+    flip() {
+        this.isFlipped = !this.isFlipped;
+
+        this.draw();
+    }
+
+    scramble() {
+        Array(30).fill(0).forEach(i => {
+            var btn = parseInt(Math.random()*4);
+            var dial = parseInt(Math.random()*4);
+            var dir = !!parseInt(Math.random()*2);
+            var numTurns = parseInt(Math.random()*6)
+
+            this.toggleButton(btn);
+            Array(numTurns).fill(0).forEach(k => {
+                this._turnHands(dial, dir);
+            });
+        })
+        this.draw();
+    }
+
+    toggleButton(n) {
+        this.buttons[n].toggle();
+        this.draw();
+    }
+
+    incCorner(n) {
+        this._turnHands(n, true);
+        this.draw();
+    }
+
+    decCorner(n) {
+        this._turnHands(n, false);
+        this.draw();
+    }
+
+    isButtonDown(n) {
+        return this.buttons[n].isDown;
+    }
+
+    isButtonUp(n) {
+        return !this.isButtonDown(n);
+    }
+
+}
+
+
+function init() {
+    var canvas = document.getElementById('cnv');
+
+    canvas.addEventListener('mousedown', (evt) => {mouseDown(evt)});
+    document.addEventListener('mouseup', (evt) => {mouseUp(evt)});
+
+    canvas.addEventListener('touchstart', (evt) => {touchStart(evt)});
+    document.addEventListener('touchend', (evt) => {touchEnd(evt)});
+    // document.addEventListener('touchcancel', (evt) => {T.touchEnd(evt)});
+
+    puzzle = new Puzzle(canvas);
+    puzzle.draw();
+}
+
+// Touching below the help box and then touching the help box registers as a
+// vertical swipe up (which calls scramble()); this flag prevents that.
+var isHelpVisible = true;
+var puzzle;
+var downEvt;
+
+</script>
+</head>
+<body onload='init()'>
+
+<div id='help' onclick='clearHelp(this)' ontouchstart='clearHelp(this)'>
+    <p><b>Rubik's Clock</b></p>
+    <p>Swipe diagonally in corners to turn dials.</p>
+    <p>Swipe vertically in center to scramble dials.</p>
+    <p>Swipe horizontally in center to flip puzzle.</p>
+    <p>Touch this box to hide it.</p>
+</div>
+
+<canvas id="cnv" width="800" height="600"></canvas>
+
+</body>
+</html>
